@@ -173,4 +173,4 @@ Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/flaviotome/
 
 ## License
 
-The bundled `wacli` binary is MIT-licensed; its license is included in the image at `/usr/share/licenses/wacli/LICENSE`.
+[MIT](LICENSE). The bundled `wacli` binary is also MIT-licensed; its license is included in the image at `/usr/share/licenses/wacli/LICENSE`.
