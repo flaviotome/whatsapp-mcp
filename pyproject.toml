@@ -1,0 +1,9 @@
+[project]
+name = "whatsapp-mcp"
+version = "0.1.0"
+description = "Read-only WhatsApp MCP server backed by wacli"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

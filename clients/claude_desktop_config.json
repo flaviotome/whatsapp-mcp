@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:8000/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_AUTH_TOKEN}"
+      ],
+      "env": {
+        "MCP_AUTH_TOKEN": "paste-the-token-from-docker-compose-logs"
+      }
+    }
+  }
+}

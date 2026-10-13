@@ -1,0 +1,11 @@
+# Development override: build the image locally instead of pulling it from GHCR.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# WACLI_REPO / WACLI_REF select which wacli source the image compiles.
+services:
+  whatsapp-mcp:
+    image: whatsapp-mcp:dev
+    build:
+      context: .
+      args:
+        WACLI_REPO: ${WACLI_REPO:-https://github.com/openclaw/wacli.git}
+        WACLI_REF: ${WACLI_REF:-v0.21.0}
