@@ -8,10 +8,10 @@
 services:
   whatsapp-mcp:
     image: ghcr.io/flaviotome/whatsapp-mcp:${WHATSAPP_MCP_VERSION:-latest}
-    container_name: whatsapp-mcp
     restart: unless-stopped
     environment:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      HOST_PORT: ${HOST_PORT:-8000}
       DOMAIN: ${DOMAIN:-}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       WA_PAIR_PHONE: ${WA_PAIR_PHONE:-}

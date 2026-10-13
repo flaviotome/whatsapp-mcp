@@ -20,7 +20,9 @@ class Settings:
     # Public domain served by the optional Caddy (HTTPS) profile.
     domain: str = DOMAIN
     # URL users open in the browser.
-    public_url: str = os.getenv("PUBLIC_URL") or (f"https://{DOMAIN}" if DOMAIN else "http://localhost:8000")
+    public_url: str = os.getenv("PUBLIC_URL") or (
+        f"https://{DOMAIN}" if DOMAIN else f"http://localhost:{os.getenv('HOST_PORT', '8000')}"
+    )
     # Bearer token for every route except /health. When unset, server.main() generates one
     # and persists it in token_file so it survives restarts.
     auth_token: str = os.getenv("MCP_AUTH_TOKEN", "")
