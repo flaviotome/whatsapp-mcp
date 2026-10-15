@@ -21,6 +21,19 @@ docker compose up -d
 docker compose logs whatsapp-mcp | grep -E "QR page|MCP endpoint"
 ```
 
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+mkdir $HOME\whatsapp-mcp; cd $HOME\whatsapp-mcp
+curl.exe -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/docker-compose.yml
+docker compose up -d
+docker compose logs whatsapp-mcp | Select-String "QR page|MCP endpoint"
+```
+
+Use `curl.exe`, not `curl`: in Windows PowerShell `curl` is an alias for `Invoke-WebRequest`.
+</details>
+
 The log shows the **QR page URL with your access token**. The token is generated on first start and kept in the data volume; print it again any time with:
 
 ```bash
