@@ -35,6 +35,14 @@ class Settings:
     pair_phone: str = os.getenv("WA_PAIR_PHONE", "")
     # "quiet" keeps phone notifications audible while the linked device is online.
     presence_mode: str = os.getenv("WA_PRESENCE_MODE", "quiet")
+    # Images (issue #1): cache dir, background prefetch window and cache cap.
+    media_dir: str = os.getenv("MEDIA_DIR", "/data/media")
+    # Opt-in background download of recent images (0 = only download when an agent asks).
+    media_prefetch_days: int = int(os.getenv("MEDIA_PREFETCH_DAYS", "0"))
+    media_prefetch_interval: float = float(os.getenv("MEDIA_PREFETCH_INTERVAL", "120"))
+    media_prefetch_batch: int = int(os.getenv("MEDIA_PREFETCH_BATCH", "50"))
+    media_cache_max_mb: int = int(os.getenv("MEDIA_CACHE_MAX_MB", "1024"))
+    image_max_edge: int = int(os.getenv("IMAGE_MAX_EDGE", "1568"))
     command_timeout: float = float(os.getenv("WACLI_COMMAND_TIMEOUT", "30"))
     restart_backoff: float = float(os.getenv("WACLI_RESTART_BACKOFF", "5"))
 

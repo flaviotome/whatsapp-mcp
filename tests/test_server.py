@@ -167,3 +167,11 @@ def test_mcp_tools_over_http(client, monkeypatch):
     assert payload["messages"][0]["text"] == "bom dia" and payload["has_more"] is True
     # limit is clamped and the query is passed after "--" so it can never become a flag
     assert calls[0] == ("messages", "search", "--limit=200", "--", "--bom")
+
+
+def test_tool_errors_reach_the_agent(client, monkeypatch):
+    # Regression: mcp 2.x hides the text of non-ToolError exceptions from the client.
+    chats = [{"jid": "1@g.us", "name": "Silva A"}, {"jid": "2@g.us", "name": "Silva B"}]
+    monkeypatch.setattr(server, "run_json", lambda *a: chats)
+    result = _rpc(client, "tools/call", {"name": "list_messages", "arguments": {"chat": "silva"}})["result"]
+    assert result["isError"] and "ambiguous" in result["content"][0]["text"] and "1@g.us" in result["content"][0]["text"]

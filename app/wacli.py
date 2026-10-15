@@ -17,13 +17,16 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 from .config import Settings
 
 log = logging.getLogger("whatsapp-mcp.wacli")
 
 
-class WacliError(RuntimeError):
-    pass
+class WacliError(ToolError):
+    """An anticipated failure. As a ToolError, MCP returns its message to the agent
+    (any other exception reaches the agent only as a generic "Error executing tool")."""
 
 
 def run_json(settings: Settings, *args: str) -> Any:
