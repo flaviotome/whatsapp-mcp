@@ -116,7 +116,8 @@ Then just ask:
 
 Images are returned to the client as MCP image content, so multimodal agents (Claude) can describe, read or compare them. The server never analyses images itself.
 
-- **Background download**: images from the last `MEDIA_PREFETCH_DAYS` (default 30) are downloaded into the data volume shortly after they arrive, because WhatsApp's servers only keep media for a limited time. Older images are downloaded when an agent asks for them, if WhatsApp still has them.
+- **On demand**: an image is downloaded only when an agent opens it with `get_message_image`, e.g. while summarizing a chat ("catch me up on the Family group since yesterday") the agent sees which messages are images and opens the relevant ones. Nothing is downloaded in the background by default.
+- **Expiry**: WhatsApp's servers keep media for a limited time; older images may no longer be downloadable. If you prefer to keep a local copy of recent images anyway, set `MEDIA_PREFETCH_DAYS=N` to download every image from the last N days in the background (costs disk and bandwidth).
 - **Cache**: `/data/media/images`, capped by `MEDIA_CACHE_MAX_MB` (default 1024; oldest evicted first). `whatsapp_status` reports `images_cached` and `cache_mb`.
 - Videos, documents and voice notes are not downloaded yet (see the issues for planned audio transcription).
 
@@ -145,7 +146,7 @@ All optional, via `.env` next to `docker-compose.yml` (see [`.env.example`](.env
 | `WA_PAIR_PHONE` | — | Pair with a phone-number code instead of QR |
 | `WA_PRESENCE_MODE` | `quiet` | `quiet` keeps phone notifications audible; `normal` shows this device online |
 | `WACLI_SYNC_MAX_MESSAGES` / `WACLI_SYNC_MAX_DB_SIZE` | — | Caps on local history growth |
-| `MEDIA_PREFETCH_DAYS` | `30` | Download images from the last N days in the background (`0` = on demand only) |
+| `MEDIA_PREFETCH_DAYS` | `0` | `0` = download images only when an agent opens them; `N` = also download every image from the last N days in the background |
 | `MEDIA_CACHE_MAX_MB` | `1024` | Image cache size cap |
 | `WHATSAPP_MCP_VERSION` | `latest` | Image tag to run |
 

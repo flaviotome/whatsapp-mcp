@@ -37,7 +37,8 @@ class Settings:
     presence_mode: str = os.getenv("WA_PRESENCE_MODE", "quiet")
     # Images (issue #1): cache dir, background prefetch window and cache cap.
     media_dir: str = os.getenv("MEDIA_DIR", "/data/media")
-    media_prefetch_days: int = int(os.getenv("MEDIA_PREFETCH_DAYS", "30"))  # 0 disables prefetch
+    # Opt-in background download of recent images (0 = only download when an agent asks).
+    media_prefetch_days: int = int(os.getenv("MEDIA_PREFETCH_DAYS", "0"))
     media_prefetch_interval: float = float(os.getenv("MEDIA_PREFETCH_INTERVAL", "120"))
     media_prefetch_batch: int = int(os.getenv("MEDIA_PREFETCH_BATCH", "50"))
     media_cache_max_mb: int = int(os.getenv("MEDIA_CACHE_MAX_MB", "1024"))

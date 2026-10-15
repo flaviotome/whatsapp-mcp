@@ -124,6 +124,16 @@ def test_prefetch_downloads_recent_images_only(store, fake_download):
     assert store.stats()["images_cached"] == 2
 
 
+def test_prefetch_is_off_by_default(store, fake_download):
+    calls, _ = fake_download
+    assert Settings().media_prefetch_days == 0
+    object.__setattr__(store.settings, "media_prefetch_days", 0)
+    assert store.prefetch_once() == {"downloaded": 0, "failed": 0} and calls == []
+    prefetcher = media_mod.Prefetcher(store)
+    prefetcher.start()
+    assert not prefetcher._thread.is_alive()  # no background thread: images download on demand only
+
+
 def test_evict_keeps_cache_under_cap(store, fake_download):
     store.fetch(CHAT, "img-new")
     object.__setattr__(store.settings, "media_cache_max_mb", 0)

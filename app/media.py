@@ -3,10 +3,12 @@
 - Discovery: read-only SQLite queries on wacli.db (a documented wacli integration surface).
 - Download: `wacli --read-only media download`, which takes no store lock and therefore
   runs while `sync --follow` is connected.
+- Downloads happen on demand, when an agent opens an image.
 - Cache: <media_dir>/images/<sha1(chat|msg)>.img, capped by size (oldest evicted first).
-  Downloads that WhatsApp's CDN refuses (expired media) leave a .failed marker so the
-  background prefetcher does not retry them on every pass.
-- Prefetch: a thread downloads recent images before WhatsApp's CDN expires them.
+  Downloads that WhatsApp's CDN refuses (expired media) leave a .failed marker so they
+  are not requested again.
+- Optional prefetch (MEDIA_PREFETCH_DAYS > 0, off by default): a thread downloads recent
+  images before WhatsApp's CDN expires them, at the cost of disk and bandwidth.
 """
 
 from __future__ import annotations
