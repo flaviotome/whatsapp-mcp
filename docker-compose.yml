@@ -1,4 +1,4 @@
-# WhatsApp MCP — read-only WhatsApp access for AI agents.
+# WhatsApp MCP — WhatsApp access for AI agents (read-only unless WA_SEND_ENABLED=true).
 #
 #   docker compose up -d                      # local only (http://localhost:8000, use an SSH tunnel from a VM)
 #   DOMAIN=wa.example.com docker compose --profile https up -d   # + public HTTPS via Caddy
@@ -20,6 +20,9 @@ services:
       WACLI_SYNC_MAX_DB_SIZE: ${WACLI_SYNC_MAX_DB_SIZE:-}
       MEDIA_PREFETCH_DAYS: ${MEDIA_PREFETCH_DAYS:-0}
       MEDIA_CACHE_MAX_MB: ${MEDIA_CACHE_MAX_MB:-1024}
+      WA_SEND_ENABLED: ${WA_SEND_ENABLED:-false}
+      WA_SEND_ALLOWED_CHATS: ${WA_SEND_ALLOWED_CHATS:-}
+      WA_SEND_SPACING: ${WA_SEND_SPACING:-}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       # Localhost only. From another machine, use an SSH tunnel or the https profile below.

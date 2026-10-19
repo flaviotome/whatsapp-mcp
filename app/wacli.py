@@ -1,8 +1,12 @@
 """Thin wrapper around the wacli binary.
 
 - `run_json` executes one-shot read commands (`--read-only --json`), never via a shell.
+- `run_send` executes one send command; while `sync --follow` holds the store lock, wacli
+  delegates it to that process over its local socket (<store>/.send.sock).
 - `Supervisor` keeps the long-running WhatsApp connection alive:
-  `wacli auth --follow` while unpaired (emits QR codes), `wacli sync --follow` once paired.
+  `wacli auth` while unpaired (emits QR codes, then imports history until idle and exits),
+  `wacli sync --follow` once paired. Only `sync --follow` serves delegated sends, so `auth`
+  deliberately runs without --follow.
   Both emit NDJSON lifecycle events on stderr, which drive the connection state below.
 """
 
@@ -37,7 +41,37 @@ def run_json(settings: Settings, *args: str) -> Any:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=settings.command_timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise WacliError(f"wacli timed out after {settings.command_timeout}s") from exc
+    return _envelope(proc)
 
+
+def run_send(settings: Settings, *args: str) -> Any:
+    """Run a `wacli send ...` command (writable) and return its JSON `data`.
+
+    wacli gets a shorter --timeout than the subprocess so that it reports its own outcome;
+    if we still have to kill it, the message may already have gone out and must not be retried.
+    """
+    wacli_timeout = max(5, int(settings.send_timeout) - 5)
+    cmd = [settings.wacli_bin, "--store", settings.store_dir, "--json", f"--timeout={wacli_timeout}s", "send", *args]
+    env = {k: v for k, v in os.environ.items() if k != "WACLI_READONLY"}
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=settings.send_timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        raise WacliError(
+            f"no answer from wacli after {settings.send_timeout}s; the message may still have been sent, "
+            "so check list_messages before retrying"
+        ) from exc
+    try:
+        return _envelope(proc)
+    except WacliError as exc:
+        # Lock held by a process without a send socket: `auth` still importing history right after pairing.
+        if "store is locked" in str(exc):
+            raise WacliError(
+                "WhatsApp is still importing history after pairing; nothing was sent. Try again in a minute."
+            ) from exc
+        raise
+
+
+def _envelope(proc: subprocess.CompletedProcess[str]) -> Any:
     # Success goes to stdout; with --json, errors are a JSON envelope on stderr.
     for stream in (proc.stdout, proc.stderr):
         for line in reversed(stream.strip().splitlines()):
@@ -110,8 +144,11 @@ class Supervisor:
     def _command(self, authenticated: bool) -> list[str]:
         base = [self.settings.wacli_bin, "--store", self.settings.store_dir, "--events"]
         if authenticated:
-            return [*base, "sync", "--follow", "--max-reconnect", "0", "--presence-mode", self.settings.presence_mode]
-        cmd = [*base, "auth", "--follow"]
+            cmd = [*base, "sync", "--follow", "--max-reconnect", "0", "--presence-mode", self.settings.presence_mode]
+            if self.settings.send_enabled and self.settings.send_spacing:
+                cmd += ["--send-spacing", self.settings.send_spacing]
+            return cmd
+        cmd = [*base, "auth"]
         if self.settings.pair_phone:
             cmd += ["--phone", self.settings.pair_phone]
         return cmd
@@ -137,6 +174,9 @@ class Supervisor:
                 code = -1
             if self._stop.is_set():
                 break
+            if code == 0 and not authenticated and self._refresh_auth():
+                log.info("pairing complete; switching to continuous sync")
+                continue
             log.warning("wacli exited with code %s; restarting in %ss", code, self.settings.restart_backoff)
             if self._state.state not in ("logged_out", "error"):
                 self._update(state="reconnecting")
