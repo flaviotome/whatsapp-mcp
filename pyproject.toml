@@ -1,7 +1,7 @@
 [project]
 name = "whatsapp-mcp"
 version = "0.1.0"
-description = "Read-only WhatsApp MCP server backed by wacli"
+description = "WhatsApp MCP server backed by wacli (read-only by default, optional sending)"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

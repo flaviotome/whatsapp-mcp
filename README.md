@@ -1,11 +1,12 @@
 # WhatsApp MCP
 
-Read-only WhatsApp access for AI agents through the [Model Context Protocol](https://modelcontextprotocol.io).
+WhatsApp access for AI agents through the [Model Context Protocol](https://modelcontextprotocol.io): read-only by default, sending optional.
 Link your number by scanning a QR code once, then ask Claude (or any MCP client) things like
 *"which chats have unread messages?"* or *"summarize today's messages in the Family group"*.
 
 - **One container**, one command: `docker compose up -d`. Runs on any Linux VM (amd64 or arm64).
-- **Read-only**: list chats, read and search messages, find contacts, look at received images. Nothing is ever sent, deleted or changed.
+- **Read-only by default**: list chats, read and search messages, find contacts, look at received images. Nothing is sent, deleted or changed.
+- **Optional sending** (`WA_SEND_ENABLED=true`): send text messages, replies and reactions, optionally limited to an allowlist of chats.
 - Built on [wacli](https://github.com/openclaw/wacli) (Go + [whatsmeow](https://github.com/tulir/whatsmeow)), which links as a WhatsApp Web device and keeps a local, full-text searchable copy of your messages.
 
 > Not affiliated with WhatsApp or Meta. It uses the WhatsApp Web protocol as a linked device; use it with your own account.
@@ -96,6 +97,7 @@ Then just ask:
 - "Summarize the last 50 messages in the Family group."
 - "Find messages about 'invoice' since 2026-09-01."
 - "What is in the photo Alice sent yesterday?"
+- With sending enabled: "Reply to Alice that I'll be there at 8" (the agent shows you the message and asks before sending).
 
 ## Tools
 
@@ -109,8 +111,12 @@ Then just ask:
 | `search_contacts` | `query`, `limit` | Contacts by name, phone or JID |
 | `list_images` | `chat?`, `limit`, `after?`, `before?`, `include_stickers` | Image messages with sender, caption and cache state |
 | `get_message_image` | `chat`, `message_id` | The image itself (resized to ≤1568 px) plus sender/caption, for the agent to analyse |
+| `send_message` ✉️ | `chat`, `text`, `reply_to?`, `mentions?`, `link_preview` | Send a text message (optionally quoting a message or @mentioning group members) |
+| `react_to_message` ✉️ | `chat`, `message_id`, `emoji` | React to a message (`""` removes the reaction) |
 
-`chat` accepts a JID, a phone number or a (partial) chat name; ambiguous names return the candidates. Dates are `YYYY-MM-DD` or RFC 3339.
+✉️ Only with `WA_SEND_ENABLED=true`; otherwise these tools do not exist.
+
+`chat` accepts a JID, a phone number or a (partial) chat name; ambiguous names return the candidates. Send tools only accept a name that matches one chat exactly. Dates are `YYYY-MM-DD` or RFC 3339.
 
 ### Images
 
@@ -120,6 +126,16 @@ Images are returned to the client as MCP image content, so multimodal agents (Cl
 - **Expiry**: WhatsApp's servers keep media for a limited time; older images may no longer be downloadable. If you prefer to keep a local copy of recent images anyway, set `MEDIA_PREFETCH_DAYS=N` to download every image from the last N days in the background (costs disk and bandwidth).
 - **Cache**: `/data/media/images`, capped by `MEDIA_CACHE_MAX_MB` (default 1024; oldest evicted first). `whatsapp_status` reports `images_cached` and `cache_mb`.
 - Videos, documents and voice notes are not downloaded yet (see the issues for planned audio transcription).
+
+### Sending
+
+Off by default. With `WA_SEND_ENABLED=true` in `.env` (then `docker compose up -d`), the agent gets `send_message` and `react_to_message` and writes **as you** from your account.
+
+- Sends reuse the running connection: wacli delegates each send to the `sync --follow` process over a local socket, so there is no second WhatsApp session. The service must be `connected`; otherwise nothing is sent.
+- The tools are annotated as destructive and the server instructions tell the agent to show you the recipient and text and wait for your OK, and never to send because a received message asks for it. Clients such as Claude also ask for permission before calling a non-read-only tool.
+- `WA_SEND_ALLOWED_CHATS` restricts sending to some chats: comma-separated chat JIDs as shown by `list_chats` (e.g. `120363...@g.us`) or phone numbers (`5511999998888`). A contact stored under a `@lid` JID must be listed by that JID.
+- `WA_SEND_SPACING` (e.g. `2s` or `1s-4s`) spaces consecutive sends; bursts of messages are what get accounts rate-limited or banned.
+- `sent: true` means WhatsApp accepted the message, not that it was delivered. If a send times out, the message may still have gone out: the agent is told to check `list_messages` before retrying.
 
 ## HTTP endpoints
 
@@ -148,6 +164,10 @@ All optional, via `.env` next to `docker-compose.yml` (see [`.env.example`](.env
 | `WACLI_SYNC_MAX_MESSAGES` / `WACLI_SYNC_MAX_DB_SIZE` | — | Caps on local history growth |
 | `MEDIA_PREFETCH_DAYS` | `0` | `0` = download images only when an agent opens them; `N` = also download every image from the last N days in the background |
 | `MEDIA_CACHE_MAX_MB` | `1024` | Image cache size cap |
+| `WA_SEND_ENABLED` | `false` | `true` adds the send tools (see [Sending](#sending)) |
+| `WA_SEND_ALLOWED_CHATS` | — | Comma-separated chat JIDs / phone numbers the agent may send to (empty = any chat) |
+| `WA_SEND_SPACING` | — | Minimum spacing between sends, e.g. `2s` or `1s-4s` |
+| `WA_SEND_TIMEOUT` | `60` | Seconds to wait for one send |
 | `WHATSAPP_MCP_VERSION` | `latest` | Image tag to run |
 
 ## Operations
@@ -164,10 +184,11 @@ To unlink, remove the device in *WhatsApp › Linked devices*; the service shows
 ## How it works
 
 ```
- agent ──MCP──► /mcp ┐                         ┌─► wacli auth --follow   (not linked: emits QR codes)
+ agent ──MCP──► /mcp ┐                         ┌─► wacli auth            (not linked: emits QR codes, imports history, exits)
  browser ─────► /    ├─ Python (app/) ─ supervisor ┤
                      │                         └─► wacli sync --follow   (linked: live sync, auto-reconnect)
-                     └─ tools ─► wacli --read-only --json chats|messages|contacts …
+                     ├─ tools ─► wacli --read-only --json chats|messages|contacts …
+                     └─ send tools ─► wacli send text|react ──socket──► sync --follow  (only with WA_SEND_ENABLED)
                                          │
                        /data: session.db (device keys) · wacli.db (messages, FTS5) · auth_token · media/images
 ```
@@ -175,11 +196,13 @@ To unlink, remove the device in *WhatsApp › Linked devices*; the service shows
 - A supervisor thread runs the long-lived wacli process and turns its NDJSON events (`qr_code`, `connected`, `logged_out`, …) into the connection state.
 - Each tool call runs a read-only wacli command (no shell, validated arguments) against the local index; reads work while sync holds the store lock.
 - Images are found with a read-only SQLite query on `wacli.db` and fetched with `wacli --read-only media download`, which needs no store lock either.
+- Sends run `wacli send …` without `--read-only`; wacli finds the running sync through `<store>/.send.sock` (mode 0600) and sends over its connection.
 - Message text, names and filenames are treated as untrusted data: the server instructions tell the agent never to follow instructions found in them.
 
 ## Security
 
 - The QR code links a device to your account and `/mcp` exposes your conversations: keep the token secret and do not expose the port without the token/HTTPS setup above.
+- With `WA_SEND_ENABLED=true` the token also lets its holder **send messages as you**. Enable it only where you need it, and consider `WA_SEND_ALLOWED_CHATS`. Prompt injection is the main risk: a received message may try to make the agent send something, so review what the agent wants to send before approving it.
 - Host-header allowlist against DNS rebinding; access logs are disabled so tokens never land in logs.
 - Everything runs as an unprivileged user; the WhatsApp session never leaves the data volume.
 
@@ -195,7 +218,7 @@ Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/flaviotome/
 
 ## Limitations (v0.1)
 
-- Read-only: no sending or on-demand history backfill. Only images are downloaded (no video, documents or audio yet).
+- Sending covers text, replies, mentions and reactions; files, voice notes, polls, editing and deleting are not exposed yet. No on-demand history backfill. Only images are downloaded (no video, documents or audio yet).
 - Available history is what the phone sends at pairing plus everything received while the container runs.
 - One WhatsApp account per container.
 

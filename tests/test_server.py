@@ -63,7 +63,31 @@ def test_supervisor_commands():
     sup = Supervisor(Settings(pair_phone="5511999998888"))
     assert "sync" in sup._command(True) and "--follow" in sup._command(True)
     unpaired = sup._command(False)
-    assert unpaired[unpaired.index("auth") :] == ["auth", "--follow", "--phone", "5511999998888"]
+    # No --follow: only `sync --follow` serves delegated sends, so auth exits after the history import.
+    assert unpaired[unpaired.index("auth") :] == ["auth", "--phone", "5511999998888"]
+
+
+def test_supervisor_switches_to_sync_right_after_pairing(monkeypatch):
+    sup = Supervisor(Settings(restart_backoff=60))
+    auth_states = iter([False, True, True])
+    monkeypatch.setattr(sup, "_refresh_auth", lambda: next(auth_states))
+    started = []
+
+    class FakeProc:
+        stderr: list[str] = []
+
+        def __init__(self, cmd, **kwargs):
+            started.append(cmd)
+            if len(started) == 2:
+                sup._stop.set()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(wacli.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(wacli.os, "makedirs", lambda *a, **k: None)
+    sup._run()  # would block for restart_backoff if it did not switch immediately
+    assert "auth" in started[0] and "sync" in started[1]
 
 
 # ---- helpers ----------------------------------------------------------------------

@@ -81,11 +81,25 @@ class MediaStore:
                 params.append(value)
         sql.append(" ORDER BY m.ts DESC, m.rowid DESC LIMIT ?")
         params.append(limit)
+        return self._query("".join(sql), params)
+
+    def find_message(self, chat_jid: str, msg_id: str) -> dict[str, Any] | None:
+        """One stored message's sender info (used to address reactions)."""
+        if not self.db_path.exists():
+            return None
+        rows = self._query(
+            "SELECT chat_jid, msg_id, from_me, COALESCE(sender_jid, '') AS sender_jid"
+            " FROM messages WHERE chat_jid = ? AND msg_id = ? LIMIT 1",
+            [chat_jid, msg_id],
+        )
+        return rows[0] if rows else None
+
+    def _query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
         # mode=ro: never writes; a normal read-only connection sees sync's WAL updates.
         conn = sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True, timeout=5)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute("".join(sql), params).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         finally:
             conn.close()
         return [dict(r) for r in rows]

@@ -43,6 +43,13 @@ class Settings:
     media_prefetch_batch: int = int(os.getenv("MEDIA_PREFETCH_BATCH", "50"))
     media_cache_max_mb: int = int(os.getenv("MEDIA_CACHE_MAX_MB", "1024"))
     image_max_edge: int = int(os.getenv("IMAGE_MAX_EDGE", "1568"))
+    # Sending (opt-in): without WA_SEND_ENABLED the server stays read-only and exposes no send tools.
+    send_enabled: bool = os.getenv("WA_SEND_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    # Optional allowlist of chat JIDs / phone numbers the agent may write to (empty = any chat).
+    send_allowed_chats: list[str] = field(default_factory=lambda: _list("WA_SEND_ALLOWED_CHATS", ""))
+    # Passed to `sync --send-spacing` to pace delegated sends, e.g. "2s" or "1s-4s" (empty = no pacing).
+    send_spacing: str = os.getenv("WA_SEND_SPACING", "").strip()
+    send_timeout: float = float(os.getenv("WA_SEND_TIMEOUT", "60"))
     command_timeout: float = float(os.getenv("WACLI_COMMAND_TIMEOUT", "30"))
     restart_backoff: float = float(os.getenv("WACLI_RESTART_BACKOFF", "5"))
 
