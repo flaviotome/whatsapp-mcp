@@ -1,0 +1,28 @@
+# Serve WhatsApp MCP over HTTPS through a Traefik that already runs on this host
+# (e.g. the one from Hostinger's n8n template), instead of the bundled Caddy profile.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+#
+# Set in .env:
+#   DOMAIN=wa.example.com               DNS pointing to this host; also added to ALLOWED_HOSTS
+#   TRAEFIK_NETWORK=n8n_default         Docker network Traefik watches
+#   TRAEFIK_CERTRESOLVER=mytlschallenge certificate resolver name from Traefik's --certificatesresolvers flags
+#   TRAEFIK_ENTRYPOINT=websecure        (optional) HTTPS entrypoint name
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml   (optional) so plain `docker compose` includes this file
+services:
+  whatsapp-mcp:
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:?set TRAEFIK_NETWORK in .env}
+      traefik.http.routers.whatsapp-mcp.rule: Host(`${DOMAIN:?set DOMAIN in .env}`)
+      traefik.http.routers.whatsapp-mcp.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.whatsapp-mcp.tls.certresolver: ${TRAEFIK_CERTRESOLVER:?set TRAEFIK_CERTRESOLVER in .env}
+      traefik.http.services.whatsapp-mcp.loadbalancer.server.port: "8000"
+    networks:
+      - default
+      - traefik
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:?set TRAEFIK_NETWORK in .env}

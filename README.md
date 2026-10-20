@@ -43,6 +43,19 @@ docker compose exec whatsapp-mcp cat /data/auth_token
 
 The container restarts automatically with the VM (`restart: unless-stopped`) and keeps the WhatsApp session in the `whatsapp-data` volume, so you scan the QR code only once.
 
+<details>
+<summary>Fresh Debian/Ubuntu VPS, as root (installs Docker too)</summary>
+
+[`scripts/deploy-vps.sh`](scripts/deploy-vps.sh) installs Docker if missing, sets everything up in `/opt/whatsapp-mcp` (on the first free port from 8000) and prints the token. With `PAIR_PHONE` it also prints a phone-number pairing code, useful when you only have the provider's browser console and cannot open the QR page:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/scripts/deploy-vps.sh
+PAIR_PHONE=5511999998888 SEND_ENABLED=false bash deploy-vps.sh
+```
+
+Running it again keeps `.env`, the session and the messages, and updates the image.
+</details>
+
 ## Connect to the VM
 
 The service listens on `127.0.0.1:8000` of the VM only. Pick one way to reach it:
@@ -67,6 +80,23 @@ docker compose --profile https up -d
 ```
 
 [Caddy](https://caddyserver.com) obtains a Let's Encrypt certificate automatically and serves `https://wa.example.com`. Every route except `/health` requires the token.
+
+### Option C — behind a Traefik that already uses ports 80/443
+
+For VMs where another stack already runs Traefik, such as Hostinger's n8n template, [`docker-compose.traefik.yml`](docker-compose.traefik.yml) adds a router for this service and leaves the other stack untouched. Look up Traefik's network and certificate resolver (`docker inspect <traefik-container>` shows `--certificatesresolvers.<name>…` and its networks), then add them to `.env`:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/docker-compose.traefik.yml
+cat >> .env <<'EOF'
+DOMAIN=wa.example.com
+TRAEFIK_NETWORK=n8n_default
+TRAEFIK_CERTRESOLVER=mytlschallenge
+COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+EOF
+docker compose up -d
+```
+
+`COMPOSE_FILE` makes every later `docker compose` command include the override. Traefik picks up the labels without a restart and requests the certificate within seconds.
 
 ## Link your WhatsApp
 
