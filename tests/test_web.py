@@ -74,6 +74,14 @@ def test_sessions_expire_resist_tampering_and_follow_the_password(tmp_path):
     assert not Sessions(Settings(admin_password="new", session_key_file=cfg.session_key_file)).valid(cookie)
 
 
+def test_no_session_key_written_without_admin_password(tmp_path):
+    # Regression: Sessions created the key file eagerly, so servers without a password (and the
+    # tests) tried to write /data/session_key.
+    sessions = Sessions(Settings(admin_password="", session_key_file=str(tmp_path / "key")))
+    assert sessions.valid(None)
+    assert not (tmp_path / "key").exists()
+
+
 def test_throttle():
     t = Throttle(limit=2, window=60)
     t.fail()

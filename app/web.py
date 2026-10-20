@@ -75,8 +75,15 @@ def ensure_admin_password(cfg: Settings) -> tuple[Settings, bool]:
 class Sessions:
     def __init__(self, cfg: Settings):
         self.cfg = cfg
-        key, _ = _read_or_create(cfg.session_key_file, lambda: secrets.token_hex(32))
-        self.key = key.encode()
+        self._key: bytes | None = None
+
+    @property
+    def key(self) -> bytes:
+        # Created on first use, so a server without an admin password (tests) never writes it.
+        if self._key is None:
+            key, _ = _read_or_create(self.cfg.session_key_file, lambda: secrets.token_hex(32))
+            self._key = key.encode()
+        return self._key
 
     def _sign(self, expires: int) -> str:
         fingerprint = hashlib.sha256(self.cfg.admin_password.encode()).hexdigest()
