@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrar · WhatsApp MCP</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/login.js" defer></script>
+</head>
+<body>
+<main class="login">
+  <form class="card" method="post" action="/login">
+    <h1>WhatsApp MCP</h1>
+    <p class="muted">Entre com a senha de administrador.</p>
+    <div id="error" class="notice err" hidden></div>
+    <label for="password" class="small muted">Senha</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    <div class="actions"><button class="primary full" type="submit">Entrar</button></div>
+    <p class="small muted">A senha aparece no log da primeira inicialização. Para vê-la de novo, rode no servidor:
+      <code>docker compose exec whatsapp-mcp cat /data/admin_password</code></p>
+  </form>
+</main>
+</body>
+</html>

@@ -18,7 +18,7 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
@@ -52,9 +52,8 @@ def run_send(settings: Settings, *args: str) -> Any:
     """
     wacli_timeout = max(5, int(settings.send_timeout) - 5)
     cmd = [settings.wacli_bin, "--store", settings.store_dir, "--json", f"--timeout={wacli_timeout}s", "send", *args]
-    env = {k: v for k, v in os.environ.items() if k != "WACLI_READONLY"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=settings.send_timeout, env=env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=settings.send_timeout, env=_writable_env())
     except subprocess.TimeoutExpired as exc:
         raise WacliError(
             f"no answer from wacli after {settings.send_timeout}s; the message may still have been sent, "
@@ -69,6 +68,10 @@ def run_send(settings: Settings, *args: str) -> Any:
                 "WhatsApp is still importing history after pairing; nothing was sent. Try again in a minute."
             ) from exc
         raise
+
+
+def _writable_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k != "WACLI_READONLY"}
 
 
 def _envelope(proc: subprocess.CompletedProcess[str]) -> Any:
@@ -106,6 +109,9 @@ class Supervisor:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._proc: subprocess.Popen[str] | None = None
+        self._wake = threading.Event()  # cuts a restart backoff short
+        self._restart_now = False
+        self._logout_requested = False
         self._thread = threading.Thread(target=self._run, name="wacli-supervisor", daemon=True)
 
     # ---- public API -------------------------------------------------------
@@ -114,14 +120,49 @@ class Supervisor:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
+        self._terminate()
+
+    def reconnect(self) -> None:
+        """Restart the wacli process (a fresh connection); the session is kept."""
+        self._restart_now = True
+        self._terminate()
+
+    def logout(self) -> None:
+        """Unlink this device from WhatsApp. Messages stay; the next start shows a new QR code."""
+        self._logout_requested = True
+        self._terminate()
+
+    def pair_with_phone(self, phone: str) -> None:
+        """Restart pairing with an 8-character phone-number code instead of a QR code."""
+        self.settings = replace(self.settings, pair_phone=phone)
+        self.reconnect()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return asdict(self._state)
 
     # ---- internals --------------------------------------------------------
+    def _terminate(self) -> None:
+        proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()
+        self._wake.set()
+
+    def _unlink(self) -> None:
+        # `auth logout` needs the store lock, so it runs only once sync/auth has exited.
+        cmd = [self.settings.wacli_bin, "--store", self.settings.store_dir, "--json", "auth", "logout"]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=self.settings.command_timeout, env=_writable_env()
+            )
+            _envelope(proc)
+        except (WacliError, subprocess.TimeoutExpired, OSError) as exc:
+            self._update(last_error=f"unlink failed: {exc}")
+            log.error("unlink failed: %s", exc)
+            return
+        self._update(state="logged_out", authenticated=False, phone=None, linked_jid=None, last_error=None)
+        log.warning("device unlinked from WhatsApp")
+
     def _update(self, **changes: Any) -> None:
         with self._lock:
             for key, value in changes.items():
@@ -156,6 +197,10 @@ class Supervisor:
     def _run(self) -> None:
         os.makedirs(self.settings.store_dir, exist_ok=True)
         while not self._stop.is_set():
+            self._wake.clear()
+            if self._logout_requested:
+                self._logout_requested = False
+                self._unlink()
             authenticated = self._refresh_auth()
             if not authenticated:
                 self._update(state="starting", qr_code=None, pair_code=None)
@@ -177,10 +222,13 @@ class Supervisor:
             if code == 0 and not authenticated and self._refresh_auth():
                 log.info("pairing complete; switching to continuous sync")
                 continue
+            if self._restart_now or self._logout_requested:
+                self._restart_now = False
+                continue
             log.warning("wacli exited with code %s; restarting in %ss", code, self.settings.restart_backoff)
             if self._state.state not in ("logged_out", "error"):
                 self._update(state="reconnecting")
-            self._stop.wait(self.settings.restart_backoff)
+            self._wake.wait(self.settings.restart_backoff)
 
     def _handle_line(self, line: str) -> None:
         line = line.strip()

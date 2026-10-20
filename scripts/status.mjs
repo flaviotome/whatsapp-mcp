@@ -1,4 +1,4 @@
-// Prints the service status; with --open, also opens the QR pairing page in the browser.
+// Prints the service status; with --open, also opens the admin panel in the browser.
 import { exec, execSync } from "node:child_process";
 import { readEnv } from "./env.mjs";
 
@@ -27,8 +27,7 @@ try {
 }
 
 if (process.argv.includes("--open")) {
-  const url = tok ? `${base}/?token=${encodeURIComponent(tok)}` : `${base}/`;
   const opener = process.platform === "win32" ? 'start ""' : process.platform === "darwin" ? "open" : "xdg-open";
-  console.log(`Opening ${base}/`);
-  exec(`${opener} "${url}"`);
+  console.log(`Opening ${base}/ (admin password: docker compose exec whatsapp-mcp cat /data/admin_password)`);
+  exec(`${opener} "${base}/"`);
 }

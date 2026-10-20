@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     environment:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       HOST_PORT: ${HOST_PORT:-8000}
       DOMAIN: ${DOMAIN:-}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}

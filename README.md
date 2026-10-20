@@ -19,7 +19,7 @@ Requirements: Docker with Compose v2.
 mkdir whatsapp-mcp && cd whatsapp-mcp
 curl -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/docker-compose.yml
 docker compose up -d
-docker compose logs whatsapp-mcp | grep -E "QR page|MCP endpoint"
+docker compose logs whatsapp-mcp | grep -E "Admin panel|Admin password"
 ```
 
 <details>
@@ -29,19 +29,34 @@ docker compose logs whatsapp-mcp | grep -E "QR page|MCP endpoint"
 mkdir $HOME\whatsapp-mcp; cd $HOME\whatsapp-mcp
 curl.exe -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/docker-compose.yml
 docker compose up -d
-docker compose logs whatsapp-mcp | Select-String "QR page|MCP endpoint"
+docker compose logs whatsapp-mcp | Select-String "Admin panel|Admin password"
 ```
 
 Use `curl.exe`, not `curl`: in Windows PowerShell `curl` is an alias for `Invoke-WebRequest`.
 </details>
 
-The log shows the **QR page URL with your access token**. The token is generated on first start and kept in the data volume; print it again any time with:
+Open the **admin panel** (`http://localhost:8000`) and sign in with the **admin password** from the log. It is generated on first start and kept in the data volume; print it again any time with:
 
 ```bash
-docker compose exec whatsapp-mcp cat /data/auth_token
+docker compose exec whatsapp-mcp cat /data/admin_password
 ```
 
+From the panel you link WhatsApp, copy the ready-made Claude configuration and change settings, without a terminal.
+
 The container restarts automatically with the VM (`restart: unless-stopped`) and keeps the WhatsApp session in the `whatsapp-data` volume, so you scan the QR code only once.
+
+<details>
+<summary>Fresh Debian/Ubuntu VPS, as root (installs Docker too)</summary>
+
+[`scripts/deploy-vps.sh`](scripts/deploy-vps.sh) installs Docker if missing, sets everything up in `/opt/whatsapp-mcp` (on the first free port from 8000) and prints the admin password. With `PAIR_PHONE` it also prints a phone-number pairing code, useful when you only have the provider's browser console and cannot open the QR page:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/scripts/deploy-vps.sh
+PAIR_PHONE=5511999998888 SEND_ENABLED=false bash deploy-vps.sh
+```
+
+Running it again keeps `.env`, the session and the messages, and updates the image.
+</details>
 
 ## Connect to the VM
 
@@ -68,17 +83,34 @@ docker compose --profile https up -d
 
 [Caddy](https://caddyserver.com) obtains a Let's Encrypt certificate automatically and serves `https://wa.example.com`. Every route except `/health` requires the token.
 
+### Option C — behind a Traefik that already uses ports 80/443
+
+For VMs where another stack already runs Traefik, such as Hostinger's n8n template, [`docker-compose.traefik.yml`](docker-compose.traefik.yml) adds a router for this service and leaves the other stack untouched. Look up Traefik's network and certificate resolver (`docker inspect <traefik-container>` shows `--certificatesresolvers.<name>…` and its networks), then add them to `.env`:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/flaviotome/whatsapp-mcp/main/docker-compose.traefik.yml
+cat >> .env <<'EOF'
+DOMAIN=wa.example.com
+TRAEFIK_NETWORK=n8n_default
+TRAEFIK_CERTRESOLVER=mytlschallenge
+COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+EOF
+docker compose up -d
+```
+
+`COMPOSE_FILE` makes every later `docker compose` command include the override. Traefik picks up the labels without a restart and requests the certificate within seconds.
+
 ## Link your WhatsApp
 
-1. Open the QR page from the log: `http://localhost:8000/?token=<token>` (or `https://<DOMAIN>/?token=<token>`).
-2. On your phone: **WhatsApp › Settings › Linked devices › Link a device**, scan the code.
-3. The page switches to *Connected as +55…*. Recent history (up to ~3 months, as decided by the phone) arrives over the next minutes; new messages arrive live.
+1. Open the admin panel (`http://localhost:8000` or `https://<DOMAIN>`) and sign in.
+2. On your phone: **WhatsApp › Settings › Linked devices › Link a device**, scan the QR code shown in the panel.
+3. The panel switches to *Connected as +55…*. Recent history (up to ~3 months, as decided by the phone) arrives over the next minutes; new messages arrive live.
 
-No camera at hand? Set `WA_PAIR_PHONE=5511999998888` in `.env` and restart; the page shows an 8-character code for *Link with phone number instead*.
+No camera at hand? Enter your number under *Prefer a code instead of the QR?* in the panel (or set `WA_PAIR_PHONE` in `.env`) and type the 8-character code after *Link with phone number instead*.
 
 ## Connect your agent
 
-MCP endpoint: `http://localhost:8000/mcp` (through the tunnel) or `https://<DOMAIN>/mcp`, with header `Authorization: Bearer <token>`.
+MCP endpoint: `http://localhost:8000/mcp` (through the tunnel) or `https://<DOMAIN>/mcp`, with header `Authorization: Bearer <token>`. The panel's **Conectar ao Claude** page shows the address and token and copies ready-made configuration for each client below.
 
 **Claude Code**
 
@@ -88,7 +120,7 @@ claude mcp add --transport http whatsapp http://localhost:8000/mcp --header "Aut
 
 **Claude Desktop** — add to `claude_desktop_config.json` (uses [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a stdio bridge; requires Node.js), see [`clients/claude_desktop_config.json`](clients/claude_desktop_config.json).
 
-**claude.ai / remote connectors** — with Option B, add a custom connector pointing to `https://<DOMAIN>/mcp`.
+**claude.ai / remote connectors** — with Option B or C, add a custom connector pointing to `https://<DOMAIN>/mcp`, with request header `Authorization` set to `Bearer <token>`.
 
 Then just ask:
 
@@ -139,23 +171,26 @@ Off by default. With `WA_SEND_ENABLED=true` in `.env` (then `docker compose up -
 
 ## HTTP endpoints
 
-| Route | Description |
-| --- | --- |
-| `POST /mcp` | MCP Streamable HTTP endpoint (stateless) |
-| `GET /` | Pairing page (auto-refreshing QR code) |
-| `GET /qr.png` | Current QR code (404 when none) |
-| `GET /status` | `state`, `phone`, `qr_available`, `last_error`, … |
-| `GET /health` | Liveness probe (no auth) |
+| Route | Description | Auth |
+| --- | --- | --- |
+| `POST /mcp` | MCP Streamable HTTP endpoint (stateless) | token |
+| `GET /` | Admin panel: status and pairing, Claude connection, settings | admin |
+| `GET/POST /login`, `POST /logout` | Admin sign-in (password) | — |
+| `/api/*` | Panel API (settings, token rotation, reconnect, unlink, pairing by phone) | admin |
+| `GET /qr.png` | Current QR code (404 when none) | token or admin |
+| `GET /status` | `state`, `phone`, `qr_available`, `last_error`, … | token or admin |
+| `GET /health` | Liveness probe | — |
 
-Authentication: `Authorization: Bearer <token>` or, for the browser page, `?token=<token>`.
+*token* = `Authorization: Bearer <token>` (agents and scripts; never accepted in URLs). *admin* = the panel's session cookie, obtained with the admin password. The two are separate on purpose: the MCP token lets a client read and send, but not change settings, see or rotate the token, or unlink the device.
 
 ## Configuration
 
-All optional, via `.env` next to `docker-compose.yml` (see [`.env.example`](.env.example)):
+All optional, via `.env` next to `docker-compose.yml` (see [`.env.example`](.env.example)). Settings changed in the admin panel (sending, allowed chats, spacing, presence, image prefetch and cache) are saved to `/data/config.json` and take precedence over `.env`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MCP_AUTH_TOKEN` | auto-generated | Fixed bearer token |
+| `MCP_AUTH_TOKEN` | auto-generated | Fixed bearer token (then it cannot be rotated from the panel) |
+| `ADMIN_PASSWORD` | auto-generated | Fixed admin panel password; otherwise generated on first start and stored in `/data/admin_password` |
 | `HOST_PORT` | `8000` | Port on the VM, bound to `127.0.0.1` |
 | `DOMAIN` | — | Public domain for the `https` profile |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1` | Accepted `Host` headers (DNS-rebinding protection); `DOMAIN` is added automatically |
@@ -179,7 +214,7 @@ docker compose down                            # stop (session kept)
 docker compose down -v                         # stop and DELETE session + messages
 ```
 
-To unlink, remove the device in *WhatsApp › Linked devices*; the service shows a new QR code.
+To unlink, use *Desconectar WhatsApp* in the panel, or remove the device in *WhatsApp › Linked devices*; the service shows a new QR code.
 
 ## How it works
 
@@ -203,7 +238,8 @@ To unlink, remove the device in *WhatsApp › Linked devices*; the service shows
 
 - The QR code links a device to your account and `/mcp` exposes your conversations: keep the token secret and do not expose the port without the token/HTTPS setup above.
 - With `WA_SEND_ENABLED=true` the token also lets its holder **send messages as you**. Enable it only where you need it, and consider `WA_SEND_ALLOWED_CHATS`. Prompt injection is the main risk: a received message may try to make the agent send something, so review what the agent wants to send before approving it.
-- Host-header allowlist against DNS rebinding; access logs are disabled so tokens never land in logs.
+- Host-header allowlist against DNS rebinding; access logs are disabled and tokens are never accepted in URLs, so they do not land in logs or browser history.
+- Admin panel: separate password; signed session cookie (HttpOnly, SameSite=Strict, Secure over HTTPS) that a password change invalidates; same-origin check on every change (CSRF); at most 10 wrong passwords per 5 minutes; strict Content-Security-Policy and no framing.
 - Everything runs as an unprivileged user; the WhatsApp session never leaves the data volume.
 
 ## Development

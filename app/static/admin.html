@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp MCP</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/admin.js" defer></script>
+</head>
+<body>
+<header>
+  <span class="brand">WhatsApp MCP</span>
+  <nav>
+    <a href="#painel" data-tab="painel">Painel</a>
+    <a href="#conectar" data-tab="conectar">Conectar ao Claude</a>
+    <a href="#config" data-tab="config">Configurações</a>
+    <form method="post" action="/logout"><button type="submit">Sair</button></form>
+  </nav>
+</header>
+<main>
+  <div id="restarting" class="notice" hidden>Reiniciando o serviço para aplicar a mudança. Isso leva alguns segundos…</div>
+
+  <!-- Painel -->
+  <section id="tab-painel" hidden>
+    <div class="card">
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <div>
+          <h1 id="state-title">Carregando…</h1>
+          <div id="state-sub" class="muted small"></div>
+        </div>
+        <span id="state-pill" class="pill" hidden></span>
+      </div>
+
+      <div id="pairing" hidden>
+        <img id="qr" class="qr" alt="QR code de pareamento" hidden>
+        <div id="pair-code" class="code" hidden></div>
+        <ol class="small muted">
+          <li>Abra o WhatsApp no celular.</li>
+          <li>Vá em Configurações › Dispositivos conectados › Conectar um dispositivo.</li>
+          <li id="pair-step">Aponte a câmera para o QR code. Ele se renova a cada ~20 segundos.</li>
+        </ol>
+        <h3>Prefere um código em vez do QR?</h3>
+        <p class="small muted">Digite seu número com DDI e DDD. Depois, no celular, toque em "Conectar com número de telefone".</p>
+        <div class="field">
+          <input id="pair-phone" type="text" inputmode="tel" placeholder="5511999998888" autocomplete="tel">
+          <button id="pair-phone-btn" type="button">Gerar código</button>
+        </div>
+        <div id="pair-error" class="small notice err mt" hidden></div>
+      </div>
+
+      <div id="last-error" class="notice err mt" hidden></div>
+      <div class="actions">
+        <button id="reconnect" type="button">Reconectar</button>
+        <button id="unlink" class="danger" type="button" hidden>Desconectar WhatsApp</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="metric"><span class="small muted">Conversas</span><b id="m-chats">–</b></div>
+      <div class="metric"><span class="small muted">Mensagens</span><b id="m-messages">–</b></div>
+      <div class="metric"><span class="small muted">Última mensagem</span><b id="m-last">–</b></div>
+      <div class="metric"><span class="small muted">Envios desde o início</span><b id="m-sends">–</b></div>
+    </div>
+
+    <div class="card mt">
+      <h2>Atividade recente do agente</h2>
+      <ul id="activity" class="list"></ul>
+      <p id="activity-empty" class="small muted">Nenhuma chamada desde que o serviço iniciou.</p>
+    </div>
+  </section>
+
+  <!-- Conectar ao Claude -->
+  <section id="tab-conectar" hidden>
+    <div class="card">
+      <h2>Dados de conexão</h2>
+      <label class="small muted" for="mcp-url">Endereço do servidor MCP</label>
+      <div class="field"><input id="mcp-url" readonly><button type="button" data-copy="mcp-url">Copiar</button></div>
+      <label class="small muted mt" for="token">Token de acesso</label>
+      <div class="field">
+        <input id="token" type="password" readonly>
+        <button id="token-show" type="button">Mostrar</button>
+        <button type="button" data-copy="token">Copiar</button>
+      </div>
+      <p class="small muted">Quem tiver este token lê suas conversas e, se o envio estiver ligado, envia mensagens como você. Não compartilhe.</p>
+      <div class="actions"><button id="rotate" type="button">Gerar novo token</button></div>
+      <p id="token-env" class="small muted" hidden>O token está fixado pela variável MCP_AUTH_TOKEN e só pode ser trocado nela.</p>
+    </div>
+
+    <div class="card">
+      <h2>claude.ai (navegador)</h2>
+      <ol class="small">
+        <li>Abra Settings › Connectors › Add custom connector.</li>
+        <li>Name: <b>WhatsApp</b>. URL: o endereço acima.</li>
+        <li>Em Request headers, adicione o nome <b>Authorization</b> com o valor abaixo.</li>
+      </ol>
+      <div class="field"><input id="header-value" type="password" readonly><button type="button" data-copy="header-value">Copiar valor</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Claude Code (terminal)</h2>
+      <pre id="cmd-code"></pre>
+      <div class="actions"><button type="button" data-copy="cmd-code">Copiar comando</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Claude Desktop</h2>
+      <p class="small muted">Adicione em claude_desktop_config.json (precisa do Node.js instalado).</p>
+      <pre id="cmd-desktop"></pre>
+      <div class="actions"><button type="button" data-copy="cmd-desktop">Copiar JSON</button></div>
+    </div>
+  </section>
+
+  <!-- Configurações -->
+  <section id="tab-config" hidden>
+    <form id="settings" class="card">
+      <h2>Envio de mensagens</h2>
+      <div class="row">
+        <div><div>Permitir que o agente envie mensagens e reações</div>
+          <div class="small muted">O Claude pede sua confirmação antes de cada envio.</div></div>
+        <label class="switch"><input id="s-send" type="checkbox"><span></span></label>
+      </div>
+      <div class="row">
+        <div class="full">
+          <div>Só pode enviar para estas conversas</div>
+          <div class="small muted">Deixe vazio para permitir qualquer conversa.</div>
+          <div id="chips" class="chips"></div>
+          <input id="chat-search" type="search" placeholder="Buscar conversa para adicionar">
+          <div id="chat-results" class="results"></div>
+        </div>
+      </div>
+      <div class="row">
+        <div><div>Intervalo entre envios</div><div class="small muted">Espaçar envios evita bloqueios do WhatsApp.</div></div>
+        <select id="s-spacing">
+          <option value="">Sem intervalo</option>
+          <option value="2s">2 segundos</option>
+          <option value="1s-4s">1 a 4 segundos</option>
+          <option value="3s-8s">3 a 8 segundos</option>
+        </select>
+      </div>
+
+      <h2 class="mt">Privacidade e imagens</h2>
+      <div class="row">
+        <div><div>Aparecer online no WhatsApp</div><div class="small muted">Desligado, as notificações do celular continuam tocando.</div></div>
+        <label class="switch"><input id="s-presence" type="checkbox"><span></span></label>
+      </div>
+      <div class="row">
+        <div><div>Baixar imagens recentes em segundo plano</div><div class="small muted">Desligado, uma imagem só é baixada quando o agente a abre.</div></div>
+        <select id="s-prefetch">
+          <option value="0">Desligado</option>
+          <option value="1">Último dia</option>
+          <option value="7">Últimos 7 dias</option>
+          <option value="30">Últimos 30 dias</option>
+        </select>
+      </div>
+      <div class="row">
+        <div><div>Espaço máximo para imagens</div></div>
+        <select id="s-cache">
+          <option value="256">256 MB</option>
+          <option value="1024">1 GB</option>
+          <option value="2048">2 GB</option>
+          <option value="5120">5 GB</option>
+        </select>
+      </div>
+      <div id="settings-error" class="notice err mt" hidden></div>
+      <div class="actions end">
+        <button id="settings-reset" type="button">Descartar</button>
+        <button class="primary" type="submit">Salvar e reiniciar</button>
+      </div>
+    </form>
+  </section>
+</main>
+<div id="toast" class="toast" hidden></div>
+</body>
+</html>
