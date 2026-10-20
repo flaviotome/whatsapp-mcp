@@ -94,6 +94,18 @@ class MediaStore:
         )
         return rows[0] if rows else None
 
+    def db_stats(self) -> dict[str, Any]:
+        """Totals for the admin panel."""
+        if not self.db_path.exists():
+            return {"chats": 0, "messages": 0, "last_message_at": None}
+        row = self._query(
+            "SELECT (SELECT COUNT(*) FROM chats) AS chats, (SELECT COUNT(*) FROM messages) AS messages,"
+            " (SELECT MAX(ts) FROM messages) AS last_ts",
+            [],
+        )[0]
+        last = row["last_ts"]
+        return {"chats": row["chats"], "messages": row["messages"], "last_message_at": iso(last) if last else None}
+
     def _query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
         # mode=ro: never writes; a normal read-only connection sees sync's WAL updates.
         conn = sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True, timeout=5)

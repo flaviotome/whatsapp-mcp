@@ -143,12 +143,15 @@ def test_qr_png(client, monkeypatch):
     assert res.status_code == 200 and res.content.startswith(b"\x89PNG")
 
 
-def test_guard_rejects_foreign_host_and_bad_token(client):
+def test_guard_rejects_foreign_host_and_bad_token(client, monkeypatch, tmp_path):
     assert client.get("/status", headers={"host": "evil.example"}).status_code == 403
-    client.app.cfg = Settings(allowed_hosts=["testserver"], auth_token="s3cret")
+    cfg = Settings(allowed_hosts=["testserver"], auth_token="s3cret", admin_password="pw",
+                   session_key_file=str(tmp_path / "key"))
+    monkeypatch.setattr(server, "settings", cfg)
+    client.app.cfg = cfg
     assert client.get("/status").status_code == 401
     assert client.get("/status", headers={"Authorization": "Bearer s3cret"}).status_code == 200
-    assert client.get("/status?token=s3cret").status_code == 200
+    assert client.get("/status?token=s3cret").status_code == 401  # tokens never travel in URLs
     assert client.get("/health").status_code == 200
 
 

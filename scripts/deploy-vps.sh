@@ -7,6 +7,7 @@
 #   handy when the QR page (127.0.0.1 only) is not reachable from your browser.
 # SEND_ENABLED (default false): expose the send_message / react_to_message tools.
 # Safe to run again: keeps the existing .env, session and messages; pulls the latest image.
+# Prints the admin panel password; the panel then shows the MCP token and the QR code.
 set -euo pipefail
 
 DIR=${DIR:-/opt/whatsapp-mcp}
@@ -54,14 +55,16 @@ for _ in $(seq 1 30); do
 done
 port=$(grep '^HOST_PORT=' .env | cut -d= -f2)
 token=$(docker compose exec -T whatsapp-mcp cat /data/auth_token | tr -d '\r\n')
+password=$(docker compose exec -T whatsapp-mcp cat /data/admin_password 2>/dev/null | tr -d '\r\n' || true)
 state=$(docker compose exec -T whatsapp-mcp wget -qO- --header "Authorization: Bearer $token" http://127.0.0.1:8000/status \
   | sed -E 's/.*"state":"([a-z_]+)".*/\1/' || echo unknown)
 
 echo
 echo "== WhatsApp MCP is running"
-echo "   state:    $state"
-echo "   endpoint: http://127.0.0.1:$port/mcp (VPS only)"
-echo "   token:    $token"
+echo "   state:          $state"
+echo "   admin panel:    http://127.0.0.1:$port/ (VPS only: use an SSH tunnel, or publish it over HTTPS)"
+echo "   admin password: ${password:-see: cd $DIR && docker compose exec whatsapp-mcp cat /data/admin_password}"
+echo "   The panel shows the MCP address and token and pairs WhatsApp."
 if [ "$state" != "connected" ] && grep -q '^WA_PAIR_PHONE=.\+' .env; then
   echo "== Pairing code (WhatsApp > Linked devices > Link a device > Link with phone number instead):"
   for _ in $(seq 1 20); do

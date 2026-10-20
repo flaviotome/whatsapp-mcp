@@ -1,20 +1,22 @@
-"""WhatsApp MCP server (read-only unless WA_SEND_ENABLED is set).
+"""WhatsApp MCP server (read-only unless sending is enabled).
 
 One HTTP service exposes:
-  /mcp       MCP Streamable HTTP endpoint (tools for the agent)
-  /          QR-code pairing page for the browser
-  /qr.png    current QR code as PNG
-  /status    connection state as JSON
+  /mcp       MCP Streamable HTTP endpoint (tools for the agent; bearer token)
+  /          admin panel: status, pairing, Claude connection, settings (admin password, see web.py)
+  /qr.png    current QR code as PNG (token or admin session)
+  /status    connection state as JSON (token or admin session)
   /health    liveness probe (never authenticated)
 """
 
 from __future__ import annotations
 
-import html
+import functools
 import io
 import logging
 import re
 import secrets
+import time
+from collections import deque
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -25,19 +27,19 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings, settings
 from .media import MediaStore, Prefetcher, iso, parse_time
 from .wacli import Supervisor, WacliError, run_json, run_send
+from .web import Panel, ensure_admin_password, register
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("whatsapp-mcp")
 
 MAX_LIMIT = 200
 MAX_TEXT = 65536  # WhatsApp's own limit for one text message
-PAGE_TEMPLATE = (Path(__file__).parent / "qr_page.html").read_text(encoding="utf-8")
 
 READS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 SENDS = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True)
@@ -45,6 +47,8 @@ SENDS = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_
 supervisor = Supervisor(settings)
 media = MediaStore(settings)
 prefetcher = Prefetcher(media)
+# Recent tool calls for the admin panel (tool, chat, time, outcome; never message content).
+activity: deque[dict[str, Any]] = deque(maxlen=50)
 
 INSTRUCTIONS = (
     "Access to the user's WhatsApp messages, mirrored locally by wacli. "
@@ -209,8 +213,28 @@ def _image_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in out.items() if v not in (None, "")}
 
 
+def audited(fn):
+    """Record each call in `activity` for the admin panel."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        entry = {"tool": fn.__name__, "chat": kwargs.get("chat"), "at": iso(int(time.time())), "ok": False}
+        try:
+            result = fn(*args, **kwargs)
+            entry["ok"] = True
+            return result
+        except Exception as exc:
+            entry["error"] = str(exc)[:200]
+            raise
+        finally:
+            activity.appendleft(entry)
+
+    return wrapper
+
+
 # ---- MCP tools ----------------------------------------------------------------
 @mcp.tool(annotations=READS)
+@audited
 def whatsapp_status() -> dict[str, Any]:
     """Connection state of the WhatsApp linked device (state, phone, last error).
 
@@ -220,6 +244,7 @@ def whatsapp_status() -> dict[str, Any]:
 
 
 @mcp.tool(structured_output=False, annotations=READS)  # returns image content, which has no JSON schema
+@audited
 def whatsapp_get_qr_code() -> list[Any] | str:
     """Return the current pairing QR code as an image (when the device is not yet linked).
 
@@ -240,6 +265,7 @@ def whatsapp_get_qr_code() -> list[Any] | str:
 
 
 @mcp.tool(annotations=READS)
+@audited
 def list_chats(query: str | None = None, limit: int = 20, unread_only: bool = False) -> list[dict[str, Any]]:
     """List chats (pinned first, then most recent). Filter by name/JID substring with `query`."""
     args = ["chats", "list", f"--limit={_limit(limit)}"]
@@ -251,6 +277,7 @@ def list_chats(query: str | None = None, limit: int = 20, unread_only: bool = Fa
 
 
 @mcp.tool(annotations=READS)
+@audited
 def list_messages(
     chat: str | None = None,
     limit: int = 30,
@@ -269,6 +296,7 @@ def list_messages(
 
 
 @mcp.tool(annotations=READS)
+@audited
 def search_messages(
     query: str,
     chat: str | None = None,
@@ -292,12 +320,14 @@ def search_messages(
 
 
 @mcp.tool(annotations=READS)
+@audited
 def search_contacts(query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Find contacts by name, phone number, or JID."""
     return run_json(settings, "contacts", "search", f"--limit={_limit(limit)}", "--", query[:200]) or []
 
 
 @mcp.tool(annotations=READS)
+@audited
 def list_images(
     chat: str | None = None,
     limit: int = 20,
@@ -324,6 +354,7 @@ def list_images(
 
 
 @mcp.tool(structured_output=False, annotations=READS)  # returns image content, which has no JSON schema
+@audited
 def get_message_image(chat: str, message_id: str) -> list[Any]:
     """Return one WhatsApp image (or sticker) so you can see and analyse it.
 
@@ -404,8 +435,8 @@ def react_to_message(chat: str, message_id: str, emoji: str = "👍") -> dict[st
 
 
 def register_send_tools(server: MCPServer) -> None:
-    server.add_tool(send_message, annotations=SENDS)
-    server.add_tool(react_to_message, annotations=SENDS)
+    server.add_tool(audited(send_message), annotations=SENDS)
+    server.add_tool(audited(react_to_message), annotations=SENDS)
 
 
 if settings.send_enabled:
@@ -431,35 +462,60 @@ async def qr_png(_: Request) -> Response:
     return Response(_qr_png(code), media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
-@mcp.custom_route("/", methods=["GET"])
-async def index(request: Request) -> Response:
-    token = request.query_params.get("token", "")
-    return HTMLResponse(PAGE_TEMPLATE.replace("{{TOKEN}}", html.escape(token, quote=True)))
+panel = Panel(
+    settings=lambda: settings,
+    supervisor=supervisor,
+    media=media,
+    activity=activity,
+    status=_public_status,
+    run_json=lambda *args: run_json(*args),  # late-bound so tests can patch server.run_json
+)
+register(mcp, panel)
 
 
 # ---- security middleware ---------------------------------------------------------
-class GuardMiddleware:
-    """Host-header allowlist (DNS rebinding) + bearer token for everything but /health.
+PUBLIC_PATHS = ("/health", "/login")
+TOKEN_OR_SESSION_PATHS = ("/status", "/qr.png")
 
-    main() always configures a token; an empty token (tests only) disables the check.
+
+class GuardMiddleware:
+    """Host-header allowlist (DNS rebinding) for every route, then per route:
+
+    /health, /login, /static/*: open. /mcp: bearer token. /status, /qr.png: token or admin session.
+    Everything else (panel, /api/*, /logout): admin session. main() always sets a token and an
+    admin password; an empty one (tests only) disables that check.
     """
 
     def __init__(self, app: ASGIApp, cfg: Settings):
         self.app = app
         self.cfg = cfg
 
+    def _token_ok(self, request: Request) -> bool:
+        if not self.cfg.auth_token:
+            return True
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        return secrets.compare_digest(supplied.encode(), self.cfg.auth_token.encode())
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] == "/health":
+        path = scope.get("path", "")
+        if scope["type"] != "http" or path == "/health":
             return await self.app(scope, receive, send)
         request = Request(scope)
         hostname = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
         if "*" not in self.cfg.allowed_hosts and hostname not in self.cfg.allowed_hosts:
             return await JSONResponse({"error": "host not allowed"}, status_code=403)(scope, receive, send)
-        if self.cfg.auth_token:
-            supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            supplied = supplied or request.query_params.get("token", "")
-            if not secrets.compare_digest(supplied, self.cfg.auth_token):
-                return await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+        if path in PUBLIC_PATHS or path.startswith("/static/"):
+            allowed = True
+        elif path == "/mcp" or path.startswith("/mcp/"):
+            allowed = self._token_ok(request)
+        elif path in TOKEN_OR_SESSION_PATHS:
+            allowed = panel.session_ok(request) or self._token_ok(request)
+        else:
+            allowed = panel.session_ok(request)
+            if not allowed and request.method == "GET" and not path.startswith("/api/"):
+                return await RedirectResponse("/login", status_code=303)(scope, receive, send)
+        if not allowed:
+            return await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
         await self.app(scope, receive, send)
 
 
@@ -492,12 +548,16 @@ def ensure_token(cfg: Settings) -> Settings:
 def main() -> None:
     global settings
     settings = ensure_token(settings)
-    log.info("MCP endpoint: %s/mcp (header Authorization: Bearer <token>)", settings.public_url)
-    log.info("QR page:      %s/?token=%s", settings.public_url, settings.auth_token)
+    settings, generated = ensure_admin_password(settings)
+    log.info("Admin panel:  %s/", settings.public_url)
+    log.info("MCP endpoint: %s/mcp (Authorization: Bearer <token>; copy it from the admin panel)", settings.public_url)
+    if generated:
+        # Logged once, on first start. Later: docker compose exec whatsapp-mcp cat /data/admin_password
+        log.info("Admin password (first start only): %s", settings.admin_password)
     supervisor.start()
     prefetcher.start()
     try:
-        # access_log off: the QR page passes ?token= in URLs, which must not end up in logs.
+        # access_log off: request lines never end up in logs.
         uvicorn.run(create_app(), host=settings.host, port=settings.port, log_level="info", access_log=False)
     finally:
         prefetcher.stop()
